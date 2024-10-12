@@ -4,12 +4,15 @@ type Todo = {
 	id: string;
 	title: string;
 	completed: boolean;
+	date: string;
 };
 
 type TodoStore = {
 	todos: Todo[];
 	newTodo: string;
+	date: string;
 	setNewTodo: (newTodo: string) => void;
+	setDate: (date: string) => void;
 	fetchTodos: () => Promise<void>;
 	addTodo: () => Promise<void>;
 	toggleTodo: (id: string, completed: boolean) => Promise<void>;
