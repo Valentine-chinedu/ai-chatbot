@@ -1,7 +1,7 @@
 // app/chat/page.tsx
 import { useState, useEffect } from 'react';
-import { useSession } from 'next-auth/react';
 import { useChatStore } from '../store/chatStore';
+import { useSession } from 'next-auth/react';
 
 export default function ChatPage() {
 	const { data: session } = useSession();
