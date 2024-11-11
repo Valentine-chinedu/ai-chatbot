@@ -13,10 +13,19 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Todo {
+
+model User {
+  id Int @id @default(autoincrement())
+  email String @unique
+  password String?
+  conversation Conversation[]
+}
+model Conversation {
   id        String   @id @default(uuid())
-  title     String
-  completed Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  sessionId     String
+  message String
+  response String
+  timestamp DateTime @default(now())
+  userId Int @unique
+  user User @relation(fields: [userId], references: [id])
 }

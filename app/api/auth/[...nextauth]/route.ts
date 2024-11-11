@@ -1,10 +1,11 @@
 // app/api/auth/[...nextauth]/route.ts
-import NextAuth from 'next-auth';
+import NextAuth, { Session, AuthOptions } from 'next-auth';
+import { JWT } from 'next-auth/jwt';
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import prisma from '@/lib/prisma';
 import CredentialsProvider from 'next-auth/providers/credentials';
 
-const authOptions = {
+const authOptions: AuthOptions = {
 	adapter: PrismaAdapter(prisma),
 	providers: [
 		CredentialsProvider({
@@ -33,9 +34,9 @@ const authOptions = {
 		strategy: 'jwt',
 	},
 	callbacks: {
-		async session({ session, token }) {
+		async session({ session, token }: { session: Session; token: JWT }) {
 			if (token) {
-				session.userId = token.sub;
+				session.user.id = token.sub;
 			}
 			return session;
 		},
