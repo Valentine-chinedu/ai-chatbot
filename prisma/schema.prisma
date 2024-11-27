@@ -22,7 +22,7 @@ model User {
 }
 model Conversation {
   id        String   @id @default(uuid())
-  sessionId     String
+  sessionId String
   message String
   response String
   timestamp DateTime @default(now())
