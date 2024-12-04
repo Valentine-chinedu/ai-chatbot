@@ -1,66 +1,106 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
-import { convertToCoreMessages, Message, streamText } from "ai";
-import { z } from "zod";
+import {
+  type Message,
+  StreamData,
+  convertToCoreMessages,
+  streamObject,
+  streamText,
+} from 'ai';
+import { z } from 'zod';
 
-import { geminiProModel } from "@/app/ai";
+import { auth } from '@/app/(auth)/auth';
+import { customModel } from '@/lib/ai';
+import { models } from '@/lib/ai/models';
+import { systemPrompt } from '@/lib/ai/prompts';
 import {
-  generateReservationPrice,
-  generateSampleFlightSearchResults,
-  generateSampleFlightStatus,
-  generateSampleSeatSelection,
-} from "@/app/ai/actions";
-import { auth } from "@/app/(auth)/auth";
-import {
-  createReservation,
   deleteChatById,
   getChatById,
-  getReservationById,
+  getDocumentById,
   saveChat,
-} from "@/db/queries";
-import { generateUUID } from "@/lib/utils";
+  saveDocument,
+  saveMessages,
+  saveSuggestions,
+} from '@/lib/db/queries';
+import type { Suggestion } from '@/lib/db/schema';
+import {
+  generateUUID,
+  getMostRecentUserMessage,
+  sanitizeResponseMessages,
+} from '@/lib/utils';
+
+import { generateTitleFromUserMessage } from '../../actions';
+
+export const maxDuration = 60;
+
+type AllowedTools =
+  | 'createDocument'
+  | 'updateDocument'
+  | 'requestSuggestions'
+  | 'getWeather';
+
+const blocksTools: AllowedTools[] = [
+  'createDocument',
+  'updateDocument',
+  'requestSuggestions',
+];
+
+const weatherTools: AllowedTools[] = ['getWeather'];
+
+const allTools: AllowedTools[] = [...blocksTools, ...weatherTools];
 
 export async function POST(request: Request) {
-  const { id, messages }: { id: string; messages: Array<Message> } =
+  const {
+    id,
+    messages,
+    modelId,
+  }: { id: string; messages: Array<Message>; modelId: string } =
     await request.json();
 
   const session = await auth();
 
-  if (!session) {
-    return new Response("Unauthorized", { status: 401 });
+  if (!session || !session.user || !session.user.id) {
+    return new Response('Unauthorized', { status: 401 });
   }
 
-  const coreMessages = convertToCoreMessages(messages).filter(
-    (message) => message.content.length > 0,
-  );
+  const model = models.find((model) => model.id === modelId);
 
-  const result = await streamText({
-    model: geminiProModel,
-    system: `\n
-        - you help users book flights!
-        - keep your responses limited to a sentence.
-        - DO NOT output lists.
-        - after every tool call, pretend you're showing the result to the user and keep your response limited to a phrase.
-        - today's date is ${new Date().toLocaleDateString()}.
-        - ask follow up questions to nudge user into the optimal flow
-        - ask for any details you don't know, like name of passenger, etc.'
-        - C and D are aisle seats, A and F are window seats, B and E are middle seats
-        - assume the most popular airports for the origin and destination
-        - here's the optimal flow
-          - search for flights
-          - choose flight
-          - select seats
-          - create reservation (ask user whether to proceed with payment or change reservation)
-          - authorize payment (requires user consent, wait for user to finish payment and let you know when done)
-          - display boarding pass (DO NOT display boarding pass without verifying payment)
-        '
-      `,
+  if (!model) {
+    return new Response('Model not found', { status: 404 });
+  }
+
+  const coreMessages = convertToCoreMessages(messages);
+  const userMessage = getMostRecentUserMessage(coreMessages);
+
+  if (!userMessage) {
+    return new Response('No user message found', { status: 400 });
+  }
+
+  const chat = await getChatById({ id });
+
+  if (!chat) {
+    const title = await generateTitleFromUserMessage({ message: userMessage });
+    await saveChat({ id, userId: session.user.id, title });
+  }
+
+  await saveMessages({
+    messages: [
+      { ...userMessage, id: generateUUID(), createdAt: new Date(), chatId: id },
+    ],
+  });
+
+  const streamingData = new StreamData();
+
+  const result = streamText({
+    model: customModel(model.apiIdentifier),
+    system: systemPrompt,
     messages: coreMessages,
+    maxSteps: 5,
+    experimental_activeTools: allTools,
     tools: {
       getWeather: {
-        description: "Get the current weather at a location",
+        description: 'Get the current weather at a location',
         parameters: z.object({
-          latitude: z.number().describe("Latitude coordinate"),
-          longitude: z.number().describe("Longitude coordinate"),
+          latitude: z.number(),
+          longitude: z.number(),
         }),
         execute: async ({ latitude, longitude }) => {
           const response = await fetch(
@@ -71,198 +111,292 @@ export async function POST(request: Request) {
           return weatherData;
         },
       },
-      displayFlightStatus: {
-        description: "Display the status of a flight",
+      createDocument: {
+        description: 'Create a document for a writing activity',
         parameters: z.object({
-          flightNumber: z.string().describe("Flight number"),
-          date: z.string().describe("Date of the flight"),
+          title: z.string(),
         }),
-        execute: async ({ flightNumber, date }) => {
-          const flightStatus = await generateSampleFlightStatus({
-            flightNumber,
-            date,
-          });
-
-          return flightStatus;
-        },
-      },
-      searchFlights: {
-        description: "Search for flights based on the given parameters",
-        parameters: z.object({
-          origin: z.string().describe("Origin airport or city"),
-          destination: z.string().describe("Destination airport or city"),
-        }),
-        execute: async ({ origin, destination }) => {
-          const results = await generateSampleFlightSearchResults({
-            origin,
-            destination,
-          });
-
-          return results;
-        },
-      },
-      selectSeats: {
-        description: "Select seats for a flight",
-        parameters: z.object({
-          flightNumber: z.string().describe("Flight number"),
-        }),
-        execute: async ({ flightNumber }) => {
-          const seats = await generateSampleSeatSelection({ flightNumber });
-          return seats;
-        },
-      },
-      createReservation: {
-        description: "Display pending reservation details",
-        parameters: z.object({
-          seats: z.string().array().describe("Array of selected seat numbers"),
-          flightNumber: z.string().describe("Flight number"),
-          departure: z.object({
-            cityName: z.string().describe("Name of the departure city"),
-            airportCode: z.string().describe("Code of the departure airport"),
-            timestamp: z.string().describe("ISO 8601 date of departure"),
-            gate: z.string().describe("Departure gate"),
-            terminal: z.string().describe("Departure terminal"),
-          }),
-          arrival: z.object({
-            cityName: z.string().describe("Name of the arrival city"),
-            airportCode: z.string().describe("Code of the arrival airport"),
-            timestamp: z.string().describe("ISO 8601 date of arrival"),
-            gate: z.string().describe("Arrival gate"),
-            terminal: z.string().describe("Arrival terminal"),
-          }),
-          passengerName: z.string().describe("Name of the passenger"),
-        }),
-        execute: async (props) => {
-          const { totalPriceInUSD } = await generateReservationPrice(props);
-          const session = await auth();
-
+        execute: async ({ title }) => {
           const id = generateUUID();
+          let draftText = '';
 
-          if (session && session.user && session.user.id) {
-            await createReservation({
+          streamingData.append({
+            type: 'id',
+            content: id,
+          });
+
+          streamingData.append({
+            type: 'title',
+            content: title,
+          });
+
+          streamingData.append({
+            type: 'clear',
+            content: '',
+          });
+
+          const { fullStream } = streamText({
+            model: customModel(model.apiIdentifier),
+            system:
+              'Write about the given topic. Markdown is supported. Use headings wherever appropriate.',
+            prompt: title,
+          });
+
+          for await (const delta of fullStream) {
+            const { type } = delta;
+
+            if (type === 'text-delta') {
+              const { textDelta } = delta;
+
+              draftText += textDelta;
+              streamingData.append({
+                type: 'text-delta',
+                content: textDelta,
+              });
+            }
+          }
+
+          streamingData.append({ type: 'finish', content: '' });
+
+          if (session.user?.id) {
+            await saveDocument({
               id,
+              title,
+              content: draftText,
               userId: session.user.id,
-              details: { ...props, totalPriceInUSD },
             });
+          }
 
-            return { id, ...props, totalPriceInUSD };
-          } else {
+          return {
+            id,
+            title,
+            content: 'A document was created and is now visible to the user.',
+          };
+        },
+      },
+      updateDocument: {
+        description: 'Update a document with the given description',
+        parameters: z.object({
+          id: z.string().describe('The ID of the document to update'),
+          description: z
+            .string()
+            .describe('The description of changes that need to be made'),
+        }),
+        execute: async ({ id, description }) => {
+          const document = await getDocumentById({ id });
+
+          if (!document) {
             return {
-              error: "User is not signed in to perform this action!",
+              error: 'Document not found',
             };
           }
-        },
-      },
-      authorizePayment: {
-        description:
-          "User will enter credentials to authorize payment, wait for user to repond when they are done",
-        parameters: z.object({
-          reservationId: z
-            .string()
-            .describe("Unique identifier for the reservation"),
-        }),
-        execute: async ({ reservationId }) => {
-          return { reservationId };
-        },
-      },
-      verifyPayment: {
-        description: "Verify payment status",
-        parameters: z.object({
-          reservationId: z
-            .string()
-            .describe("Unique identifier for the reservation"),
-        }),
-        execute: async ({ reservationId }) => {
-          const reservation = await getReservationById({ id: reservationId });
 
-          if (reservation.hasCompletedPayment) {
-            return { hasCompletedPayment: true };
-          } else {
-            return { hasCompletedPayment: false };
+          const { content: currentContent } = document;
+          let draftText = '';
+
+          streamingData.append({
+            type: 'clear',
+            content: document.title,
+          });
+
+          const { fullStream } = streamText({
+            model: customModel(model.apiIdentifier),
+            system:
+              'You are a helpful writing assistant. Based on the description, please update the piece of writing.',
+            experimental_providerMetadata: {
+              openai: {
+                prediction: {
+                  type: 'content',
+                  content: currentContent,
+                },
+              },
+            },
+            messages: [
+              {
+                role: 'user',
+                content: description,
+              },
+              { role: 'user', content: currentContent },
+            ],
+          });
+
+          for await (const delta of fullStream) {
+            const { type } = delta;
+
+            if (type === 'text-delta') {
+              const { textDelta } = delta;
+
+              draftText += textDelta;
+              streamingData.append({
+                type: 'text-delta',
+                content: textDelta,
+              });
+            }
           }
+
+          streamingData.append({ type: 'finish', content: '' });
+
+          if (session.user?.id) {
+            await saveDocument({
+              id,
+              title: document.title,
+              content: draftText,
+              userId: session.user.id,
+            });
+          }
+
+          return {
+            id,
+            title: document.title,
+            content: 'The document has been updated successfully.',
+          };
         },
       },
-      displayBoardingPass: {
-        description: "Display a boarding pass",
+      requestSuggestions: {
+        description: 'Request suggestions for a document',
         parameters: z.object({
-          reservationId: z
+          documentId: z
             .string()
-            .describe("Unique identifier for the reservation"),
-          passengerName: z
-            .string()
-            .describe("Name of the passenger, in title case"),
-          flightNumber: z.string().describe("Flight number"),
-          seat: z.string().describe("Seat number"),
-          departure: z.object({
-            cityName: z.string().describe("Name of the departure city"),
-            airportCode: z.string().describe("Code of the departure airport"),
-            airportName: z.string().describe("Name of the departure airport"),
-            timestamp: z.string().describe("ISO 8601 date of departure"),
-            terminal: z.string().describe("Departure terminal"),
-            gate: z.string().describe("Departure gate"),
-          }),
-          arrival: z.object({
-            cityName: z.string().describe("Name of the arrival city"),
-            airportCode: z.string().describe("Code of the arrival airport"),
-            airportName: z.string().describe("Name of the arrival airport"),
-            timestamp: z.string().describe("ISO 8601 date of arrival"),
-            terminal: z.string().describe("Arrival terminal"),
-            gate: z.string().describe("Arrival gate"),
-          }),
+            .describe('The ID of the document to request edits'),
         }),
-        execute: async (boardingPass) => {
-          return boardingPass;
+        execute: async ({ documentId }) => {
+          const document = await getDocumentById({ id: documentId });
+
+          if (!document || !document.content) {
+            return {
+              error: 'Document not found',
+            };
+          }
+
+          const suggestions: Array<
+            Omit<Suggestion, 'userId' | 'createdAt' | 'documentCreatedAt'>
+          > = [];
+
+          const { elementStream } = streamObject({
+            model: customModel(model.apiIdentifier),
+            system:
+              'You are a help writing assistant. Given a piece of writing, please offer suggestions to improve the piece of writing and describe the change. It is very important for the edits to contain full sentences instead of just words. Max 5 suggestions.',
+            prompt: document.content,
+            output: 'array',
+            schema: z.object({
+              originalSentence: z.string().describe('The original sentence'),
+              suggestedSentence: z.string().describe('The suggested sentence'),
+              description: z
+                .string()
+                .describe('The description of the suggestion'),
+            }),
+          });
+
+          for await (const element of elementStream) {
+            const suggestion = {
+              originalText: element.originalSentence,
+              suggestedText: element.suggestedSentence,
+              description: element.description,
+              id: generateUUID(),
+              documentId: documentId,
+              isResolved: false,
+            };
+
+            streamingData.append({
+              type: 'suggestion',
+              content: suggestion,
+            });
+
+            suggestions.push(suggestion);
+          }
+
+          if (session.user?.id) {
+            const userId = session.user.id;
+
+            await saveSuggestions({
+              suggestions: suggestions.map((suggestion) => ({
+                ...suggestion,
+                userId,
+                createdAt: new Date(),
+                documentCreatedAt: document.createdAt,
+              })),
+            });
+          }
+
+          return {
+            id: documentId,
+            title: document.title,
+            message: 'Suggestions have been added to the document',
+          };
         },
       },
     },
-    onFinish: async ({ responseMessages }) => {
-      if (session.user && session.user.id) {
+    onFinish: async ({ response }) => {
+      if (session.user?.id) {
         try {
-          await saveChat({
-            id,
-            messages: [...coreMessages, ...responseMessages],
-            userId: session.user.id,
+          const responseMessagesWithoutIncompleteToolCalls =
+            sanitizeResponseMessages(response.messages);
+
+          await saveMessages({
+            messages: responseMessagesWithoutIncompleteToolCalls.map(
+              (message) => {
+                const messageId = generateUUID();
+
+                if (message.role === 'assistant') {
+                  streamingData.appendMessageAnnotation({
+                    messageIdFromServer: messageId,
+                  });
+                }
+
+                return {
+                  id: messageId,
+                  chatId: id,
+                  role: message.role,
+                  content: message.content,
+                  createdAt: new Date(),
+                };
+              },
+            ),
           });
         } catch (error) {
-          console.error("Failed to save chat");
+          console.error('Failed to save chat');
         }
       }
+
+      streamingData.close();
     },
     experimental_telemetry: {
       isEnabled: true,
-      functionId: "stream-text",
+      functionId: 'stream-text',
     },
   });
 
-  return result.toDataStreamResponse({});
+  return result.toDataStreamResponse({
+    data: streamingData,
+  });
 }
 
 export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);
-  const id = searchParams.get("id");
+  const id = searchParams.get('id');
 
   if (!id) {
-    return new Response("Not Found", { status: 404 });
+    return new Response('Not Found', { status: 404 });
   }
 
   const session = await auth();
 
   if (!session || !session.user) {
-    return new Response("Unauthorized", { status: 401 });
+    return new Response('Unauthorized', { status: 401 });
   }
 
   try {
     const chat = await getChatById({ id });
 
     if (chat.userId !== session.user.id) {
-      return new Response("Unauthorized", { status: 401 });
+      return new Response('Unauthorized', { status: 401 });
     }
 
     await deleteChatById({ id });
 
-    return new Response("Chat deleted", { status: 200 });
+    return new Response('Chat deleted', { status: 200 });
   } catch (error) {
-    return new Response("An error occurred while processing your request", {
+    return new Response('An error occurred while processing your request', {
       status: 500,
     });
   }
