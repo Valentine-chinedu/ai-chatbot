@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { auth } from '@/app/(auth)/auth';
-import { geminiFlashModel } from '@/lib/ai';
+// import { geminiFlashModel } from '@/lib/ai';
 // import { models } from '@/lib/ai/models';
 import { systemPrompt } from '@/lib/ai/prompts';
 import {
@@ -18,6 +18,7 @@ import {
     getMostRecentUserMessage,
     sanitizeResponseMessages,
 } from '@/lib/utils';
+import { deepseek } from '@ai-sdk/deepseek';
 import {
     type Message,
     StreamData,
@@ -87,7 +88,7 @@ export async function POST(request: Request) {
     const streamingData = new StreamData();
 
     const result = streamText({
-        model: geminiFlashModel,
+        model: deepseek('deepseek-chat'),
         system: systemPrompt,
         messages: coreMessages,
         maxSteps: 5,
@@ -133,7 +134,7 @@ export async function POST(request: Request) {
                     });
 
                     const { fullStream } = streamText({
-                        model: geminiFlashModel,
+                        model: deepseek('deepseek-chat'),
                         system: 'Write about the given topic. Markdown is supported. Use headings wherever appropriate.',
                         prompt: title,
                     });
@@ -199,7 +200,7 @@ export async function POST(request: Request) {
                     });
 
                     const { fullStream } = streamText({
-                        model: geminiFlashModel,
+                        model: deepseek('deepseek-chat'),
                         system: 'You are a helpful writing assistant. Based on the description, please update the piece of writing.',
                         experimental_providerMetadata: {
                             openai: {
@@ -274,7 +275,7 @@ export async function POST(request: Request) {
                     > = [];
 
                     const { elementStream } = streamObject({
-                        model: geminiFlashModel,
+                        model: deepseek('deepseek-chat'),
                         system: 'You are a help writing assistant. Given a piece of writing, please offer suggestions to improve the piece of writing and describe the change. It is very important for the edits to contain full sentences instead of just words. Max 5 suggestions.',
                         prompt: document.content,
                         output: 'array',
