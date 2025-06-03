@@ -14,6 +14,7 @@
     },
     "dependencies": {
         "@ai-sdk/deepseek": "^0.2.14",
+        "@ai-sdk/google": "^1.2.19",
         "@ai-sdk/react": "^1.2.12",
         "@biomejs/biome": "^1.9.4",
         "@google-cloud/vertexai": "^1.9.0",

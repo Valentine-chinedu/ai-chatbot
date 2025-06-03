@@ -1,7 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { auth } from '@/app/(auth)/auth';
-// import { geminiFlashModel } from '@/lib/ai';
-// import { models } from '@/lib/ai/models';
 import { systemPrompt } from '@/lib/ai/prompts';
 import {
     deleteChatById,
@@ -19,10 +17,14 @@ import {
     sanitizeResponseMessages,
 } from '@/lib/utils';
 import { deepseek } from '@ai-sdk/deepseek';
+// import { geminiFlashModel } from '@/lib/ai';
+// import { models } from '@/lib/ai/models';
+import { google } from '@ai-sdk/google';
 import {
-    type Message,
+    Message,
     StreamData,
-    convertToCoreMessages,
+    convertToCoreMessages, // createDataStream,
+    // smoothStream,
     streamObject,
     streamText,
 } from 'ai';
@@ -87,8 +89,26 @@ export async function POST(request: Request) {
 
     const streamingData = new StreamData();
 
+    // const stream = createDataStream({
+    //     execute: (dataStream) => {
+    //         const result = streamText({
+    //             model: google('gemini-2.5-flash-preview-05-20'),
+    //             system: systemPrompt,
+    //             messages: coreMessages,
+    //             maxSteps: 5,
+    //             experimental_activeTools: allTools,
+    //             experimental_transform: smoothStream({ chunking: 'word'}),
+    //             experimental_generateMessageId: generateUUID,
+    //             tools: {
+    //                 getWeather: {
+
+    //                 }
+    //         });
+    //     },
+    // });
+
     const result = streamText({
-        model: deepseek('deepseek-chat'),
+        model: google('gemini-2.5-flash-preview-05-20'),
         system: systemPrompt,
         messages: coreMessages,
         maxSteps: 5,
