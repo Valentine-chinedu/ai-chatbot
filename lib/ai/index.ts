@@ -1,10 +1,15 @@
-import { google } from "@ai-sdk/google";
-import { experimental_wrapLanguageModel as wrapLanguageModel } from "ai";
+// // import { google } from '@ai-sdk/google';
+// import {deepseek} from '@ai-sdk/deepseek';
+// // import { experimental_wrapLanguageModel as wrapLanguageModel } from '@ai-sdk/';
 
-import { customMiddleware } from "./custom-middleware";
+// import { customMiddleware } from './custom-middleware';
 
-export const geminiFlashModel = wrapLanguageModel({
-  model: google("gemini-1.5-flash-002"),
-  middleware: customMiddleware,
-});
+// // export const geminiFlashModel = wrapLanguageModel({
+// //     model: google('models/gemini-2.0-flash'),
+// //     middleware: customMiddleware,
+// // });
 
+// export const deepseekModel = wrapLanguageModel({
+//     model: deepseek('deepseek-chat'),
+//     middleware: customMiddleware,
+// });
