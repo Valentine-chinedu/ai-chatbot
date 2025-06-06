@@ -38,7 +38,7 @@ export function AppSidebar({ user }: { user: User | undefined }) {
                             className="flex flex-row items-center gap-3"
                         >
                             <span className="hover:bg-muted cursor-pointer rounded-md px-2 text-lg font-semibold">
-                                Gemini Chatbot
+                                AI Chatbot
                             </span>
                         </Link>
                         <BetterTooltip content="New Chat" align="start">
